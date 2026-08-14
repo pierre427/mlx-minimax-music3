@@ -1,0 +1,12 @@
+weights/
+*.wav
+*.mp3
+*.pth
+*.safetensors
+__pycache__/
+*.pyc
+.venv*/
+mlx-weights/
+scratch/
+# templates are fetched by fetch_skill.sh, not committed
+minimax_music3_mlx/caption_skill/templates/

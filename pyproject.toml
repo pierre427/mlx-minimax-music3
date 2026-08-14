@@ -1,0 +1,40 @@
+[project]
+name = "mlx-minimax-music3"
+version = "0.1.0"
+description = "Apple-Silicon (MLX) port of MiniMaxAI/MiniMax-Music3 — text-to-music"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Pierre Lamy" }]
+keywords = ["mlx", "apple-silicon", "music-generation", "minimax", "text-to-music"]
+dependencies = [
+    "mlx>=0.29",
+    "mlx-lm>=0.31.3",       # upstream Qwen3 (input_embeddings path); the AR backbone
+    "transformers>=4.51",   # tokenizer
+    "numpy>=1.24",
+    "scipy>=1.11",          # 44.1->32 kHz resample fallback
+    "torch>=2.2",           # loads the pickled flowmatching_vae.pth / dav.pth checkpoints
+    "safetensors>=0.4",
+    "sentencepiece>=0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/pierre427/mlx-minimax-music3"
+Model = "https://huggingface.co/MiniMaxAI/MiniMax-Music3"
+
+[project.scripts]
+mm3-generate = "scripts.generate:main"
+mm3-server = "scripts.server:main"
+mm3-mcp = "scripts.mcp_server:main"
+
+[tool.setuptools]
+packages = ["minimax_music3_mlx"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# System dependency: ffmpeg (MP3 encoding) — `brew install ffmpeg`.

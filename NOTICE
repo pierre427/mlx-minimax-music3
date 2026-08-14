@@ -1,0 +1,30 @@
+mlx-minimax-music3
+Copyright 2026 Pierre Lamy
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This is an independent Apple-Silicon (MLX) port of MiniMax-Music3. It contains
+no model weights. It builds on and adapts the following Apache-2.0 works:
+
+- MiniMaxAI/MiniMax-Music3 — the model and its reference architecture.
+  https://huggingface.co/MiniMaxAI/MiniMax-Music3
+  `prompt.py` and `constants.py` are vendored (byte-exact) from the reference
+  serving code; the caption-rewriter skill (SKILL.md, genre-router, indexes) is
+  from MiniMax's `music-caption-rewriter` skill. The 1000 caption templates are
+  NOT redistributed here — `fetch_skill.sh` pulls them from the upstream repo.
+
+- sgl-project/sglang-omni — the MiniMax-Music3 production serving code, the
+  authority for the AR decode loop, seeded sampling, CFG, and chunk/overlap logic
+  this port reimplements. (Apache-2.0)
+
+- huggingface/diffusers (minimax-music3-integration branch) — the clean reference
+  module definitions used as parity oracles. (Apache-2.0)
+
+- mrbizarro/minimax-h3-mlx — sibling MLX port; the DAC vocoder primitives
+  (weight-norm conv, Snake activation, residual unit) in `vocoder.py` are adapted
+  from its `audio_vae.py`. (Apache-2.0)
+
+- ml-explore/mlx and ml-explore/mlx-lm — the MLX framework and the upstream Qwen3
+  implementation reused for the AR backbone. (MIT)
+
+Trademarks (MiniMax, Qwen, etc.) belong to their respective owners.
