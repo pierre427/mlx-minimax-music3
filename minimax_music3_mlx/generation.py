@@ -69,6 +69,23 @@ def _apply_c0_cfg(narrowed: np.ndarray, scale: float, top_k: int) -> np.ndarray:
     return np.where(cond < kth, -np.inf, guided)
 
 
+def _mask_stop_before_minimum(
+    c0_logits: np.ndarray, generated_frames: int, min_frames: int
+) -> np.ndarray:
+    """Suppress ``<|audio_end|>`` until the requested minimum is reached.
+
+    Column zero is the stop token by the stable c0 vocabulary contract.  Copy
+    only when masking is active so reference/default generation remains
+    bit-identical and allocation-free.
+    """
+
+    if generated_frames >= min_frames:
+        return c0_logits
+    masked = c0_logits.copy()
+    masked[0] = -np.inf
+    return masked
+
+
 def _depth_decode(
     depth, embed_tokens, hidden2: mx.array, c0: int, seed: int, frame_pos: int,
     *, forced: list[int] | None = None,
@@ -170,10 +187,14 @@ def generate_frames(
     *,
     seed: int = 0,
     max_frames: int = MAX_AUDIO_FRAMES,
+    min_frames: int = 0,
     on_frame=None,
     head_slice: bool = False,
 ):
     """Run the AR loop. Returns (codes [F, 8] int, frame_hidden [F, 32768] mx.array).
+
+    `min_frames` suppresses the sampled audio-end token until that many frames
+    have been emitted.  Its default of zero preserves reference behavior.
 
     `on_frame(frame_idx, codes8, c0_logits, frame_hidden)` is called per frame for
     parity harnesses that want the intermediate tensors.
@@ -182,6 +203,11 @@ def generate_frames(
     the 200k-vocab head, so pre-slice the head weight and compute only those logits
     — 9x less head compute + ~10% less AR weight-streaming, bit-identical result.
     """
+    if max_frames < 1 or max_frames > MAX_AUDIO_FRAMES:
+        raise ValueError(f"max_frames must be between 1 and {MAX_AUDIO_FRAMES}")
+    if min_frames < 0 or min_frames > max_frames:
+        raise ValueError("min_frames must be between 0 and max_frames")
+
     embed_tokens = backbone.model.embed_tokens
     ids_lookup = _c0_logit_ids()
     # sliced c0 head [16385, hidden] — only used when head_slice is on.
@@ -206,6 +232,7 @@ def generate_frames(
     for _ in range(max_frames):
         narrowed = np.array(narrowed_mx.astype(mx.float32)).astype(np.float64)
         c0_logits = _apply_c0_cfg(narrowed, AR_CFG_SCALE, AR_CFG_TOP_K)
+        c0_logits = _mask_stop_before_minimum(c0_logits, len(codes_out), min_frames)
         sampled = int(sample_topk_seeded(c0_logits[None], np.array([sampling_seed]), np.array([frame_pos]))[0])
         if sampled == 0:  # stop
             break

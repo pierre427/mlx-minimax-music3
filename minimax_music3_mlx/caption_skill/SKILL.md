@@ -44,6 +44,7 @@ Extract only supported or reasonably inferred values:
 - vocal presence, gender, register, timbre, and delivery
 - core instruments and production texture
 - section structure and section-specific changes
+- requested song duration and the section pacing needed to fill it
 - spatial character and explicit exclusions
 
 Classify each value internally as `explicit`, `tagged`, `inferred`, or `unspecified`.
@@ -67,6 +68,12 @@ A section tag may change its local arrangement without replacing the song's glob
 When two explicit instructions conflict, prefer the more specific and later instruction if the intent remains clear. Otherwise make the smallest musically coherent compromise.
 
 Never silently reverse an explicit vocal gender, instrumental requirement, tempo limit, required instrument, or prohibited element.
+
+Treat an explicit requested duration as a hard planning constraint. Preserve it
+verbatim in the final caption, then scale the number and breadth of sections,
+instrumental passages, transitions, repetitions, and outro so the described
+arrangement plausibly fills that time. Do not shorten a long-form request merely
+because the supplied lyric text is concise.
 
 ## Route by Progressive Disclosure
 
@@ -131,6 +138,10 @@ Return exactly these three top-level headings in this order:
 
 Include genre and subgenres, tempo, emotional progression, and overall sonic and production profile. Use an exact BPM only when explicit or strongly justified; otherwise use a range or qualitative tempo. Include key and scale only when explicit or musically useful.
 
+When the user supplies a duration, add a `Target Duration:` line immediately
+under this heading. Use the requested value and describe it as approximate rather
+than claiming sample-exact control.
+
 ### Vocal Details
 
 For vocal music, describe the lead configuration, timbre, register, delivery, harmony or backing vocals, and restrained vocal effects.
@@ -167,6 +178,7 @@ Verify that:
 - the arrangement follows a readable timeline
 - instruments have coherent entrances, changes, and exits
 - exact BPM, key, and technical details are not fabricated
+- an explicit target duration is present and the arrangement is substantial enough to fill it
 - no template sentence or complete template structure is copied
 - the caption is specific enough to guide generation without becoming an essay
 

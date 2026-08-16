@@ -8,5 +8,6 @@ __pycache__/
 .venv*/
 mlx-weights/
 scratch/
+state/
 # templates are fetched by fetch_skill.sh, not committed
 minimax_music3_mlx/caption_skill/templates/

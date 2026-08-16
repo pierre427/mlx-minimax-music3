@@ -5,9 +5,10 @@
     .venv/bin/python minimax-music3-mlx/scripts/generate.py \
         --caption "bpm is 120. key is C. upbeat acoustic pop." \
         --lyrics "[verse] sunlight on the open road\n[chorus] we are golden" \
-        --out out.wav --max-frames 150 --seed 0
+        --target-duration 4:00 --out out.mp3 --seed 0
 
-Single-window path (<= 200 AR frames). Backbone runs bf16, DiT/vocoder fp32.
+The production ceiling is 9,000 frames. A target duration is injected into the
+expanded caption and protects the first 95% from early model EOS.
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ def main() -> int:
     p.add_argument("--lyrics", required=True)
     p.add_argument("--out", type=Path, default=Path("minimax_music3_mlx.mp3"))
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--max-frames", type=int, default=150)
+    p.add_argument("--target-duration", help="requested duration in seconds or M:SS (up to 5:00)")
+    p.add_argument("--max-frames", type=int, default=9000,
+                   help="developer safety ceiling; production default is always 9000")
     p.add_argument("--num-steps", type=int, default=30)
     p.add_argument("--weights", type=Path, default=PORT_ROOT / "weights")
     p.add_argument("--quant-ar", type=int, default=0, help="quantize backbone+depth to N bits (e.g. 6)")
@@ -52,6 +55,11 @@ def main() -> int:
     from minimax_music3_mlx.constants import MAX_PROMPT_TOKENS
     from minimax_music3_mlx.depth_decoder import load_depth_decoder
     from minimax_music3_mlx.dit import load_dit
+    from minimax_music3_mlx.duration import (
+        build_duration_policy,
+        ensure_target_duration,
+        extract_duration_from_text,
+    )
     from minimax_music3_mlx.pipeline import generate_music, write_audio
     from minimax_music3_mlx.prompt import build_prompt, validate_tokenizer_ids
     from minimax_music3_mlx.vocoder import load_vocoder
@@ -61,10 +69,17 @@ def main() -> int:
     validate_tokenizer_ids(tok)
 
     lyrics = args.lyrics.replace("\\n", "\n")
+    requested_duration = args.target_duration
+    if requested_duration is None:
+        requested_duration = extract_duration_from_text(args.caption)
+    policy = build_duration_policy(requested_duration, max_frames=args.max_frames)
     caption = args.caption
     if not args.no_rewrite:  # caption-rewriter skill runs for every request (per requirement)
-        caption = rewrite_caption(caption, lyrics)
-        print(f"caption-rewriter: {'applied' if rewriter_available() else 'skipped (no endpoint)'}")
+        expanded = rewrite_caption(caption, lyrics, target_seconds=policy.target_seconds)
+        print(f"caption-rewriter: {'applied' if expanded != caption else 'raw fallback'} "
+              f"(available={rewriter_available()})")
+        caption = expanded
+    caption = ensure_target_duration(caption, policy)
 
     ids = tok.encode(build_prompt(caption, lyrics), add_special_tokens=False)
     if len(ids) > MAX_PROMPT_TOKENS:  # cookbook: prompt caps at 5000 tokens
@@ -87,10 +102,13 @@ def main() -> int:
 
     t1 = time.time()
     wave32k, n = generate_music(bb, dp, ce, dit, voc, ids, seed=args.seed,
-                                max_frames=args.max_frames, num_steps=args.num_steps)
+                                max_frames=policy.max_frames, min_frames=policy.min_frames,
+                                num_steps=args.num_steps)
     out = write_audio(args.out, wave32k)  # MP3 (deletes any .wav)
+    finish_reason = "model_eos" if n < policy.max_frames else "safety_cap"
     print(f"{n} frames -> {wave32k.shape[-1] / 32000:.2f}s @ 32 kHz "
-          f"in {time.time() - t1:.1f}s -> {out}")
+          f"in {time.time() - t1:.1f}s ({finish_reason}, min_frames={policy.min_frames}, "
+          f"max_frames={policy.max_frames}) -> {out}")
     return 0
 
 

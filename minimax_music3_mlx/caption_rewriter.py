@@ -30,6 +30,8 @@ import re
 import urllib.request
 from pathlib import Path
 
+from .duration import format_duration
+
 logger = logging.getLogger(__name__)
 
 _SKILL = Path(__file__).resolve().parent / "caption_skill"
@@ -77,9 +79,19 @@ def available() -> bool:
     return bool(os.environ.get("MM3_CAPTION_API_BASE")) and os.environ.get("MM3_CAPTION_DISABLE") != "1"
 
 
-def rewrite_caption(caption: str, lyrics: str = "", *, timeout: float = 60.0) -> str:
+def rewrite_caption(
+    caption: str,
+    lyrics: str = "",
+    *,
+    target_seconds: float | None = None,
+    timeout: float = 60.0,
+) -> str:
     """Rewrite `caption` into a structured MiniMax caption. Returns the original
-    caption unchanged on any failure or when no LLM endpoint is configured."""
+    caption unchanged on any failure or when no LLM endpoint is configured.
+
+    A requested duration is a first-class constraint: every rewriter stage sees
+    it and the final renderer must use it to scale section pacing and the outro.
+    """
     global _warned
     if os.environ.get("MM3_CAPTION_DISABLE") == "1":
         return caption
@@ -98,7 +110,16 @@ def rewrite_caption(caption: str, lyrics: str = "", *, timeout: float = 60.0) ->
         router = _read(_REF / "genre-router.md")
         # tags only from lyrics (never the lyric text itself)
         tags = " ".join(re.findall(r"\[[^\]]+\]", lyrics))
-        brief = f"Caption: {caption}\nLyric section tags: {tags or '(none)'}"
+        duration = (
+            f"{format_duration(target_seconds)} ({target_seconds:g} seconds)"
+            if target_seconds is not None
+            else "model-selected"
+        )
+        brief = (
+            f"Caption: {caption}\n"
+            f"Lyric section tags: {tags or '(none)'}\n"
+            f"Target duration: {duration}"
+        )
         sys_msg = {"role": "system", "content": skill}
 
         # Stage 1: route to family/families
@@ -124,8 +145,11 @@ def rewrite_caption(caption: str, lyrics: str = "", *, timeout: float = 60.0) ->
         s3 = _llm_chat([sys_msg,
             {"role": "user", "content": f"{brief}\n\n--- selected templates ---\n{tpl_text}\n\n"
              "Now render ONE final structured caption for this request, following the skill's "
-             "output format (Global Metadata, Vocal Details, Arrangement). Preserve explicit user "
-             "constraints and any instrumental request. Output ONLY the caption text."}],
+             "output format (Global Metadata, Vocal Details, Arrangement). Preserve every explicit "
+             "user constraint and any instrumental request. When a target duration is supplied, add "
+             "a 'Target Duration:' line under Global Metadata and scale the section-by-section "
+             "arrangement, instrumental development, and outro to fill it. Output ONLY the caption "
+             "text."}],
             base=base, model=model, key=key, timeout=timeout)
         out = s3.strip()
         if len(out) < 40:  # implausible rewrite -> keep original

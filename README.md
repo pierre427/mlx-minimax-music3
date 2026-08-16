@@ -84,28 +84,40 @@ huggingface-cli download MiniMaxAI/MiniMax-Music3 --local-dir weights
 python scripts/generate.py \
   --caption "upbeat Irish jig, 6/8, fiddle, tin whistle, bodhran, D major" \
   --lyrics $'[verse]\nup and away we go\n[chorus]\ndance till the morning' \
-  --seed 3 --max-frames 300 --quant-ar 6 --out jig.mp3
+  --target-duration 4:30 --seed 3 --quant-ar 6 --out jig.mp3
 ```
 
 **HTTP API** (OpenAI-audio style):
 ```bash
 python scripts/server.py --port 8600 --quant-ar 6
 curl -s -X POST http://127.0.0.1:8600/v1/audio/music -H "Content-Type: application/json" \
-  -d '{"caption":"warm acoustic folk waltz, fingerpicked guitar, wistful","lyrics":"[verse]\nsoft evening light","seed":1}' \
+  -d '{"caption":"warm acoustic folk waltz, fingerpicked guitar, wistful","lyrics":"[verse]\nsoft evening light","target_duration":"4:30","seed":1}' \
   --output out.mp3
 ```
+
+Song duration is a semantic target, not a generation ceiling. Production always
+uses the full 9,000-frame safety cap and suppresses early model EOS until 95% of
+an explicit target. The API accepts `target_duration`, `target_seconds`, or
+`duration_seconds`; CLI durations may be seconds or `M:SS`. If no duration field
+is supplied, an explicit length in the caption such as “a 4:30 song” is inferred.
 
 **MCP** (for agents — Claude / Codex / etc.):
 ```bash
 python scripts/mcp_server.py --port 8770 --api http://127.0.0.1:8600
-# tools: generate_music, music_style_guide  (loopback streamable-HTTP at /mcp)
+# tools: generate_music, get_music_job, music_style_guide
 ```
+
+`generate_music` accepts `duration_seconds` and returns a durable job ID
+immediately. Poll `get_music_job` for `queued`, `running`, `succeeded`, or
+`failed`; successful jobs contain the saved MP3 path and generation metadata.
 
 ## Caption rewriter (optional)
 
-Bundles MiniMax's `music-caption-rewriter` skill to expand a brief caption into
-the model's preferred structured format. It needs an OpenAI-compatible LLM
-endpoint; without one it uses the raw caption (generation never breaks):
+Bundles MiniMax's `music-caption-rewriter` skill to expand even a very brief
+caption into the model's preferred structured format. The rewriter preserves an
+explicit duration and scales its arrangement guidance toward that target. It
+needs an OpenAI-compatible LLM endpoint; without one the raw caption plus the
+canonical duration constraint is used, so generation never breaks:
 
 ```bash
 export MM3_CAPTION_API_BASE=http://127.0.0.1:8000/v1
@@ -117,7 +129,8 @@ export MM3_CAPTION_MODEL=your-local-model
 - Lyrics: put each `[tag]` **alone on its own line** — a tag on the same line as
   lyric text silently drops that line (a model quirk).
 - Sampling is fixed (no temperature/top_p); change `seed` for alternate takes.
-- Length caps at ~9,000 frames (~5–6 min), the model's trained context limit.
+- Requested duration is capped at five minutes. The separate 9,000-frame limit
+  is a runaway safety ceiling and is always supplied in production.
 
 ## License & credits
 
