@@ -10,7 +10,8 @@ Endpoints
     GET  /v1/models           -> OpenAI-style model list
     POST /v1/audio/music      -> MP3 bytes  (alias: /v1/audio/speech)
         body: {"caption"|"instructions": str, "lyrics"|"input": str,
-               "seed": int=0, "max_frames": int=300, "num_steps": int=30,
+               "seed": int=0, "target_duration"?: seconds|"M:SS",
+               "max_frames": 9000, "num_steps": int=30,
                "rewrite": bool=true}
 
 The caption-rewriter skill runs on every request when MM3_CAPTION_API_BASE is set
@@ -37,6 +38,7 @@ os.environ.setdefault("MLX_ENABLE_TF32", "1")  # production: fp32 DiT on NAX
 import minimax_music3_mlx  # noqa: E402,F401
 import mlx.core as mx  # noqa: E402
 import numpy as np  # noqa: E402
+from minimax_music3_mlx.constants import MAX_AUDIO_FRAMES  # noqa: E402
 
 MODEL_ID = "MiniMaxAI/MiniMax-Music3"
 _state: dict = {}
@@ -71,23 +73,43 @@ def _load(weights: Path, quant_ar: int):
           f"(TF32={os.environ.get('MLX_ENABLE_TF32')} q{quant_ar or 'none'} AR, bf16 DAV)", flush=True)
 
 
-def _generate(caption: str, lyrics: str, seed: int, max_frames: int, num_steps: int,
-              rewrite: bool) -> tuple[bytes, dict]:
+def _generate(
+    caption: str,
+    lyrics: str,
+    seed: int,
+    target_duration,
+    num_steps: int,
+    rewrite: bool,
+) -> tuple[bytes, dict]:
     from minimax_music3_mlx.caption_rewriter import available, rewrite_caption
+    from minimax_music3_mlx.duration import (
+        build_duration_policy,
+        ensure_target_duration,
+        extract_duration_from_text,
+    )
     from minimax_music3_mlx.generation import generate_frames
     from minimax_music3_mlx.pipeline import synthesize_windows, resample_44k_to_32k, write_mp3
     from minimax_music3_mlx.prompt import build_prompt
     from minimax_music3_mlx.constants import MAX_PROMPT_TOKENS
 
-    rewritten = rewrite_caption(caption, lyrics) if rewrite else caption
-    ids = _state["tok"].encode(build_prompt(rewritten, lyrics), add_special_tokens=False)
+    if target_duration is None:
+        target_duration = extract_duration_from_text(caption)
+    policy = build_duration_policy(target_duration)
+    rewritten = (
+        rewrite_caption(caption, lyrics, target_seconds=policy.target_seconds)
+        if rewrite
+        else caption
+    )
+    effective_caption = ensure_target_duration(rewritten, policy)
+    ids = _state["tok"].encode(build_prompt(effective_caption, lyrics), add_special_tokens=False)
     truncated = len(ids) > MAX_PROMPT_TOKENS
     ids = ids[:MAX_PROMPT_TOKENS]
 
     with _gen_lock:
         t = time.time()
         codes, frame_hidden = generate_frames(_state["bb"], _state["dp"], ids,
-                                              seed=seed, max_frames=max_frames)
+                                              seed=seed, max_frames=policy.max_frames,
+                                              min_frames=policy.min_frames)
         n = int(frame_hidden.shape[0])
         wave44 = synthesize_windows(_state["ce"], _state["dit"], _state["voc"], frame_hidden,
                                     seed=seed, num_steps=num_steps)
@@ -102,9 +124,29 @@ def _generate(caption: str, lyrics: str, seed: int, max_frames: int, num_steps: 
     proc = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "s16le",
                            "-ar", "32000", "-ac", "2", "-i", "pipe:0", "-codec:a", "libmp3lame",
                            "-b:a", "256k", "-f", "mp3", "pipe:1"], input=pcm, capture_output=True)
-    meta = {"frames": n, "seconds": round(wave32.shape[-1] / 32000, 2), "seed": seed,
-            "gen_s": round(elapsed, 1), "rewritten": rewrite and available(),
-            "prompt_truncated": truncated}
+    actual_seconds = round(wave32.shape[-1] / 32000, 2)
+    finish_reason = "model_eos" if n < policy.max_frames else "safety_cap"
+    meta = {
+        "frames": n,
+        "seconds": actual_seconds,
+        "seed": seed,
+        "gen_s": round(elapsed, 1),
+        "finish_reason": finish_reason,
+        "max_frames": policy.max_frames,
+        "min_frames": policy.min_frames,
+        "caption_rewritten": rewrite and rewritten != caption,
+        "caption_expanded": effective_caption != caption,
+        "duration_injected": policy.target_seconds is not None,
+        "rewriter_available": available(),
+        "prompt_truncated": truncated,
+    }
+    if policy.target_seconds is not None:
+        meta.update(
+            target_seconds=policy.target_seconds,
+            target_frames=policy.target_frames,
+            duration_delta_s=round(actual_seconds - policy.target_seconds, 2),
+            minimum_ratio=policy.minimum_ratio,
+        )
     return proc.stdout, meta
 
 
@@ -141,10 +183,30 @@ class Handler(BaseHTTPRequestHandler):
         lyrics = req.get("lyrics") or req.get("input") or ""
         if not caption:
             return self._json(400, {"error": "caption (or instructions) required"})
+        requested_max_frames = req.get("max_frames", MAX_AUDIO_FRAMES)
         try:
-            audio, meta = _generate(caption, lyrics, int(req.get("seed", 0)),
-                                    int(req.get("max_frames", 300)), int(req.get("num_steps", 30)),
-                                    bool(req.get("rewrite", True)))
+            if int(requested_max_frames) != MAX_AUDIO_FRAMES:
+                raise ValueError(
+                    f"max_frames is fixed at the {MAX_AUDIO_FRAMES}-frame safety ceiling; "
+                    "use target_duration or target_seconds to request song length"
+                )
+            target_duration = req.get(
+                "target_duration",
+                req.get("target_seconds", req.get("duration_seconds")),
+            )
+        except (TypeError, ValueError) as e:
+            return self._json(400, {"error": str(e)})
+        try:
+            audio, meta = _generate(
+                caption,
+                lyrics,
+                int(req.get("seed", 0)),
+                target_duration,
+                int(req.get("num_steps", 30)),
+                bool(req.get("rewrite", True)),
+            )
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
         except Exception as e:
             import traceback
             traceback.print_exc()

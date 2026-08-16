@@ -24,7 +24,13 @@ import mlx.core as mx
 import numpy as np
 
 from .chunking import chunk_windows, crop_sample_bounds, overlap_mel_length
-from .constants import DAV_SAMPLE_RATE, DEFAULT_DIT_CFG_SCALE, DEFAULT_DIT_STEPS, OUTPUT_SAMPLE_RATE
+from .constants import (
+    DAV_SAMPLE_RATE,
+    DEFAULT_DIT_CFG_SCALE,
+    DEFAULT_DIT_STEPS,
+    MAX_AUDIO_FRAMES,
+    OUTPUT_SAMPLE_RATE,
+)
 from .generation import generate_frames
 
 
@@ -176,11 +182,19 @@ def synthesize_windows(cond_encoder, dit, vocoder, frame_hidden: mx.array, *, se
 
 
 def generate_music(backbone, depth, cond_encoder, dit, vocoder, prompt_ids, *,
-                   seed: int = 0, max_frames: int = 200, num_steps: int = DEFAULT_DIT_STEPS,
+                   seed: int = 0, max_frames: int = MAX_AUDIO_FRAMES, min_frames: int = 0,
+                   num_steps: int = DEFAULT_DIT_STEPS,
                    cfg_scale: float = DEFAULT_DIT_CFG_SCALE, out_path: str | Path | None = None,
                    multiwindow: bool = True):
     """Full pipeline (multi-window by default). Returns (wave_32k [2, samples], num_frames)."""
-    codes, frame_hidden = generate_frames(backbone, depth, prompt_ids, seed=seed, max_frames=max_frames)
+    codes, frame_hidden = generate_frames(
+        backbone,
+        depth,
+        prompt_ids,
+        seed=seed,
+        max_frames=max_frames,
+        min_frames=min_frames,
+    )
     if frame_hidden.shape[0] == 0:
         raise RuntimeError("AR stage produced zero frames")
     if multiwindow:

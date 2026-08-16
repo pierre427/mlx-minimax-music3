@@ -1,6 +1,6 @@
 [project]
 name = "mlx-minimax-music3"
-version = "0.1.0"
+version = "0.2.0"
 description = "Apple-Silicon (MLX) port of MiniMaxAI/MiniMax-Music3 — text-to-music"
 readme = "README.md"
 requires-python = ">=3.10"
